@@ -2,6 +2,12 @@
 
 Assistente de WhatsApp para assistência técnica (Electron + React + TypeScript + SQLite embutido `node:sqlite` + Baileys), com IA local opcional (llama.cpp + Bonsai 2 9B).
 
+## Baixar
+
+**[Baixar o instalador para Windows (AssistBot-Setup-1.0.0.exe)](https://github.com/n0sd3/assistbot/releases/latest/download/AssistBot-Setup-1.0.0.exe)** · [Todas as versões](https://github.com/n0sd3/assistbot/releases)
+
+O instalador não é assinado digitalmente: se o Windows mostrar o aviso do SmartScreen, clique em *Mais informações* e depois em *Executar assim mesmo*.
+
 ## Telas
 
 | Assistente: dados da assistência | Assistente: conectar o WhatsApp |
