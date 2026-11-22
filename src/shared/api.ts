@@ -1,4 +1,4 @@
-import type { AppSettings, BotConfig, ConversationRow, MessageRow, PickupRow, RequestRow, Summary, UpdateInfo, WaStatus } from './types'
+import type { AiState, AppSettings, BotConfig, ConversationRow, MessageRow, PickupRow, RequestRow, Summary, UpdateInfo, WaStatus } from './types'
 
 export interface SystemInfo {
   version: string; online: boolean; dataFolder: string; encryption: boolean; botActive: boolean
@@ -31,6 +31,13 @@ export interface Api {
   getUpdateUrl(): Promise<string>
   setUpdateUrl(u: string): Promise<void>
   openPowerSettings(): Promise<void>
+  aiGetState(): Promise<AiState>
+  aiInstall(): Promise<void>
+  aiCancel(): Promise<void>
+  aiSetEnabled(on: boolean): Promise<void>
+  aiSetOptions(o: { idleMinutes?: number; override?: { backend?: 'cpu' | 'vulkan'; ctx?: number; model?: 'q4_0' | 'q2_0' } }): Promise<void>
+  aiTest(text: string): Promise<string>
+  aiRemove(): Promise<void>
   finishSetup(): Promise<void>
   resetAll(): Promise<void>
 }
@@ -40,4 +47,5 @@ export interface Events {
   changed: null
   system: SystemInfo
   update: UpdateInfo
+  ai: AiState
 }

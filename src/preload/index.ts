@@ -5,7 +5,7 @@ const names = [
   'getState', 'saveConfig', 'saveSettings', 'setBotEnabled', 'waConnect', 'waDisconnect', 'waLogout', 'conversations', 'messages',
   'takeOver', 'release', 'sendManual', 'requests', 'updateRequest', 'pickups', 'updatePickup', 'backupNow', 'exportBackup',
   'importBackup', 'listBackups', 'openFolder', 'checkUpdate', 'installUpdate', 'getUpdateUrl', 'setUpdateUrl', 'openPowerSettings',
-  'finishSetup', 'resetAll'
+  'aiGetState', 'aiInstall', 'aiCancel', 'aiSetEnabled', 'aiSetOptions', 'aiTest', 'aiRemove', 'finishSetup', 'resetAll'
 ] as const
 const api = Object.fromEntries(names.map((n) => [n, (...a: unknown[]) => ipcRenderer.invoke('api:' + n, ...a)])) as unknown as Api
 

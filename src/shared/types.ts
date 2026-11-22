@@ -38,7 +38,7 @@ export interface Session {
 }
 
 export type EngineEvent = 'none' | 'completed' | 'handoff'
-export interface EngineResult { session: Session; replies: string[]; event: EngineEvent }
+export interface EngineResult { session: Session; replies: string[]; event: EngineEvent; invalid?: boolean }
 
 export type ConnState = 'disconnected' | 'connecting' | 'qr' | 'connected'
 export interface WaStatus { state: ConnState; qr?: string; phone?: string; since?: number; lastError?: string }
@@ -65,3 +65,15 @@ export interface AppSettings {
   preventSleep: boolean; autoBackup: boolean; notifyHuman: boolean; backupKeep: number
 }
 export interface UpdateInfo { state: 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'none' | 'error'; version?: string; message?: string }
+
+export interface AiState {
+  enabled: boolean
+  installed: boolean
+  running: boolean
+  hardware?: import('./ai').Hardware
+  plan?: import('./ai').AiPlan
+  download?: { stage: string; done: number; total: number; message: string }
+  lastError?: string
+  idleMinutes: number
+  override: { backend?: 'cpu' | 'vulkan'; ctx?: number; model?: 'q4_0' | 'q2_0' }
+}

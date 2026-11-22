@@ -1,6 +1,7 @@
 import type { WaTransport, IncomingMessage } from '../whatsapp/transport'
 import * as db from '../db'
-import { isOpenNow, processMessage } from './engine'
+import { isOpenNow, processMessage, stepInfo } from './engine'
+import type { AiProvider } from '../ai/provider'
 import { log } from '../logger'
 
 export interface Hooks { notify(title: string, body: string, kind: 'human' | 'request'): void; changed(): void }
@@ -10,7 +11,7 @@ const MAX_AGE_MS = 2 * 3600_000 // não responde mensagens muito antigas (recebi
 export class BotManager {
   private botSent = new Set<string>()
   private queues = new Map<string, Promise<void>>()
-  constructor(private wa: WaTransport, private hooks: Hooks) {
+  constructor(private wa: WaTransport, private hooks: Hooks, private ai?: AiProvider) {
     wa.onMessage((m) => this.enqueue(m))
   }
 
@@ -54,9 +55,27 @@ export class BotManager {
       db.setConv(jid, { status: 'bot', session: null })
     } else if (conv.status === 'done') db.setConv(jid, { status: 'bot' })
 
-    const res = processMessage(conv.status === 'bot' ? conv.session : null, m.text, {
-      cfg, now, knownName: db.customerName(jid), open: isOpenNow(cfg, new Date())
-    })
+    const prevSession = conv.status === 'bot' ? conv.session : null
+    const open = isOpenNow(cfg, new Date())
+    const ctxBase = { cfg, now, knownName: db.customerName(jid), open }
+    const useAi = !!this.ai?.ready() && !!cfg.behavior.enabled
+    const isNew = !prevSession || prevSession.step === 'start' || prevSession.step === 'done' || prevSession.step === 'handoff'
+    let prefill: Record<string, string> | undefined
+    if (useAi && isNew && m.text.length > 15) prefill = (await this.ai!.prefill(m.text, cfg)) as Record<string, string> | undefined
+    let res = processMessage(prevSession, m.text, { ...ctxBase, prefill })
+    const askedQuestion = m.text.trim().endsWith('?') && !!prevSession && ['name', 'brand', 'problem', 'followup', 'address', 'availability'].includes(prevSession.step)
+    if (useAi && (res.invalid || askedQuestion) && prevSession) {
+      const info = stepInfo(prevSession, cfg)
+      const it = await this.ai!.interpret({ question: info.question, options: info.options, text: m.text, cfg })
+      if (it?.intent === 'answer' && res.invalid) {
+        const again = processMessage(prevSession, it.value, ctxBase)
+        if (!again.invalid) res = again
+      } else if (it?.intent === 'question') {
+        res = { session: { ...prevSession, lastActivity: now }, replies: [it.reply, info.question].filter(Boolean), event: 'none' }
+      } else if (it?.intent === 'human' && res.invalid) {
+        res = { session: { ...prevSession, step: 'handoff', lastActivity: now }, replies: [cfg.messages.handoff], event: 'handoff' }
+      }
+    }
     db.setConv(jid, { session: res.session })
     for (const r of res.replies) await this.reply(jid, r)
 

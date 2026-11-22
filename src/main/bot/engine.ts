@@ -140,7 +140,14 @@ function opportunistic(s: Session, text: string, cfg: BotConfig): void {
   }
 }
 
-export interface Ctx { cfg: BotConfig; now: number; knownName?: string; open: boolean }
+export interface Ctx { cfg: BotConfig; now: number; knownName?: string; open: boolean; prefill?: Record<string, string> }
+
+/** Pergunta atual e opções válidas (usado pela IA para interpretar respostas livres). */
+export function stepInfo(s: Session, cfg: BotConfig): { step: string; question: string; options?: string[] } {
+  const options = s.step === 'service' ? cfg.services.map((x) => x.name) : s.step === 'equipment' ? cfg.equipmentTypes.map((x) => x.name)
+    : s.step === 'pickup' ? cfg.pickup.options.map((x) => x.label) : undefined
+  return { step: s.step, question: question(s.step, s, cfg), options }
+}
 
 export function processMessage(prev: Session | null, text: string, ctx: Ctx): EngineResult {
   const { cfg, now } = ctx
@@ -148,9 +155,10 @@ export function processMessage(prev: Session | null, text: string, ctx: Ctx): En
   const replies: string[] = []
   const t = text.trim()
   const n = norm(t)
+  let wasInvalid = false
   const result = (event: EngineResult['event'] = 'none'): EngineResult => {
     s.lastActivity = now
-    return { session: s, replies, event }
+    return { session: s, replies, event, invalid: wasInvalid }
   }
 
   // sessão expirada -> recomeça
@@ -178,6 +186,7 @@ export function processMessage(prev: Session | null, text: string, ctx: Ctx): En
       }
     }
     if (ctx.knownName) s.data.name = ctx.knownName
+    if (ctx.prefill) for (const [k, v] of Object.entries(ctx.prefill)) if (v && !s.data[k]) s.data[k] = v
     opportunistic(s, t, cfg)
     // o primeiro "oi" não é resposta a nenhuma pergunta
     s.step = nextStep(s, cfg)
@@ -195,7 +204,7 @@ export function processMessage(prev: Session | null, text: string, ctx: Ctx): En
     return result()
   }
 
-  const invalid = () => { replies.push(fill(cfg.messages.invalid, cfg, s)); const q = question(s.step, s, cfg); if (q) replies.push(q); return result() }
+  const invalid = () => { wasInvalid = true; replies.push(fill(cfg.messages.invalid, cfg, s)); const q = question(s.step, s, cfg); if (q) replies.push(q); return result() }
   const advance = (): EngineResult => {
     if (s.correcting) { s.correcting = undefined; s.step = 'confirm' } else s.step = nextStep(s, cfg)
     const q = question(s.step, s, cfg)

@@ -7,7 +7,13 @@ import { BaileysTransport } from './whatsapp/baileysTransport'
 import { autoBackup, backupTo, backupDir, dataFolder, listBackups, restoreFrom } from './services'
 import { log } from './logger'
 import type { Api, SystemInfo } from '@shared/api'
-import type { UpdateInfo, WaStatus } from '@shared/types'
+import type { AiState, UpdateInfo, WaStatus } from '@shared/types'
+import { planFor, type Hardware } from '@shared/ai'
+import { detectHardware } from './ai/hardware'
+import { installBackend, installModel, installedModel, removeAll, serverPath } from './ai/installer'
+import { LlamaServer } from './ai/server'
+import { LlamaProvider } from './ai/provider'
+import { AI_ASSETS } from '@shared/ai'
 import { safeStorage } from 'electron'
 
 const HIDDEN = process.argv.includes('--hidden')
@@ -21,6 +27,42 @@ let upd: UpdateInfo = { state: 'idle' }
 let gaps: { from: number; to: number }[] = []
 const transport = new BaileysTransport()
 let manager: BotManager
+// ---------- IA local (llama.cpp + Bonsai) ----------
+interface AiCfg { enabled: boolean; idleMinutes: number; override: AiState['override'] }
+const aiCfg = (): AiCfg => ({ enabled: false, idleMinutes: 10, override: {}, ...db.kvGet<Partial<AiCfg>>('ai', {}) })
+let hardware: Hardware | undefined
+let aiDownload: AiState['download']
+let aiError: string | undefined
+let aiAbort: AbortController | undefined
+const aiPlan = () => planFor(hardware ?? { totalRamMB: 0, freeRamMB: 0, cpuModel: '', logicalCores: 1, arch: process.arch, gpus: [], freeDiskMB: 0, os: process.platform }, aiCfg().override)
+const aiInstalled = () => !!installedModel() && !!(serverPath('cpu') || serverPath('vulkan'))
+const llama = new LlamaServer(aiPlan, () => aiCfg().idleMinutes)
+const aiProvider = new LlamaProvider(llama, () => aiCfg().enabled && aiInstalled() && aiPlan().usable)
+async function aiState(): Promise<AiState> {
+  hardware ??= await detectHardware()
+  const c = aiCfg()
+  return { enabled: c.enabled, installed: aiInstalled(), running: llama.running, hardware, plan: aiPlan(), download: aiDownload, lastError: aiError, idleMinutes: c.idleMinutes, override: c.override }
+}
+const pushAi = async () => send('ai', await aiState())
+llama.onChange = () => void pushAi()
+async function aiInstallAll() {
+  hardware ??= await detectHardware()
+  const plan = aiPlan()
+  if (!plan.usable) { aiError = plan.reason; return pushAi() }
+  aiError = undefined; aiAbort = new AbortController()
+  const total = AI_ASSETS.models[plan.model].size + AI_ASSETS.backends[plan.backend].size
+  let base = 0
+  const step = (stage: string, msg: string) => (done: number) => { aiDownload = { stage, done: base + done, total, message: msg }; void pushAi() }
+  try {
+    await installBackend(plan.backend, step('motor', 'Baixando o motor de IA…'), aiAbort.signal)
+    if (plan.backend === 'vulkan') await installBackend('cpu', () => {}, aiAbort.signal) // reserva caso a placa de vídeo falhe
+    base = AI_ASSETS.backends[plan.backend].size
+    await installModel(plan.model, step('modelo', `Baixando o modelo de IA (${(AI_ASSETS.models[plan.model].size / 1073741824).toFixed(1)} GB)… pode demorar`), aiAbort.signal)
+    const c = aiCfg(); db.kvSet('ai', { ...c, enabled: true })
+  } catch (e) {
+    aiError = (e as Error).name === 'AbortError' ? 'Download cancelado. Ao tentar de novo, continua de onde parou.' : String((e as Error).message)
+  } finally { aiDownload = undefined; aiAbort = undefined; void pushAi() }
+}
 
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0) }
 app.on('second-instance', () => showWindow())
@@ -164,6 +206,17 @@ function registerIpc(updater: ReturnType<typeof setupUpdater>) {
     getUpdateUrl: () => db.kvGet('updateUrl', ''),
     setUpdateUrl: (u) => db.kvSet('updateUrl', u.trim()),
     openPowerSettings: async () => { await shell.openExternal('ms-settings:powersleep') },
+    aiGetState: () => aiState(),
+    aiInstall: () => { void aiInstallAll() },
+    aiCancel: () => { aiAbort?.abort() },
+    aiSetEnabled: async (on) => { db.kvSet('ai', { ...aiCfg(), enabled: on }); if (!on) llama.stop(); await pushAi() },
+    aiSetOptions: async (o) => { const c = aiCfg(); db.kvSet('ai', { ...c, ...o, override: o.override ?? c.override }); llama.stop(); await pushAi() },
+    aiTest: async (text) => {
+      const t0 = Date.now()
+      const r = await aiProvider.interpret({ question: 'Qual serviço você precisa?', options: db.getConfig().services.map((x) => x.name), text, cfg: db.getConfig() })
+      return r ? `${r.intent}: ${r.value || r.reply || '—'} (${((Date.now() - t0) / 1000).toFixed(1)} s)` : 'A IA não respondeu. Veja os registros.'
+    },
+    aiRemove: async () => { llama.stop(); removeAll(); db.kvSet('ai', { ...aiCfg(), enabled: false }); await pushAi() },
     finishSetup: () => { const s = db.getSettings(); s.setupDone = true; db.saveSettings(s); applyAutoStart(); refresh() },
     resetAll: async () => {
       const c = await dialog.showMessageBox(win!, { type: 'warning', buttons: ['Apagar tudo', 'Cancelar'], defaultId: 1, cancelId: 1, message: 'Apagar todos os dados?', detail: 'Isso remove atendimentos, coletas, configurações e desconecta o WhatsApp. Não pode ser desfeito.' })
@@ -187,7 +240,7 @@ app.whenReady().then(async () => {
   if (last && Date.now() - last > 5 * 60_000) { gaps = [{ from: last, to: Date.now() }, ...gaps].slice(0, 5); db.kvSet('gaps', gaps) }
   setInterval(() => db.kvSet('heartbeat', Date.now()), 60_000)
 
-  manager = new BotManager(transport, { notify, changed: () => { send('changed', null); refresh() } })
+  manager = new BotManager(transport, { notify, changed: () => { send('changed', null); refresh() } }, aiProvider)
   transport.onStatus(async (s) => {
     wa = { ...s, qr: s.qr ? await QRCode.toDataURL(s.qr, { margin: 1, width: 320 }) : undefined }
     send('wa', wa); refresh()
@@ -220,6 +273,6 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => { /* continua na bandeja */ })
-app.on('before-quit', () => { quitting = true; db.kvSet('heartbeat', Date.now()) })
+app.on('before-quit', () => { llama.stop(); quitting = true; db.kvSet('heartbeat', Date.now()) })
 process.on('uncaughtException', (e) => log.error('uncaughtException', e))
 process.on('unhandledRejection', (e) => log.error('unhandledRejection', e))

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { AppSettings } from '@shared/types'
+import { AiCard } from './AiCard'
 import { api, ConnectCard, Setting, Toggle, fmtDate, useToast, type AppState } from '../ui'
 
 export function Configuracoes({ st, reload }: { st: AppState; reload: () => void }) {
@@ -26,6 +27,8 @@ export function Configuracoes({ st, reload }: { st: AppState; reload: () => void
       <div className="banner a" style={{ marginTop: 12 }}>💡 Fechar a tampa do notebook, desligar ou suspender o computador faz o atendimento automático parar. Para um notebook, ajuste em Energia: “Quando eu fechar a tampa: Não fazer nada”.
         <button className="btn" onClick={() => api.openPowerSettings()}>Abrir ajustes de energia</button></div>
       <p className="hint">Computador desligado, suspenso ou sem internet = sem atendimento automático. As mensagens recebidas nesse período são respondidas só depois que o computador voltar (se forem recentes).</p></div>
+
+    <AiCard />
 
     <div className="card"><h2>Backup dos dados</h2>
       <Setting title="Backup automático diário" desc="Guarda cópias dos atendimentos, coletas e configurações (sem a sessão do WhatsApp)."><Toggle on={st.settings.autoBackup} onChange={(v) => set({ autoBackup: v })} /></Setting>
