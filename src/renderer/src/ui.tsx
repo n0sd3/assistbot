@@ -1,12 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { Api, SystemInfo } from '@shared/api'
-import type { AppSettings, BotConfig, Summary, UpdateInfo, WaStatus } from '@shared/types'
+import type { AppSettings, BotConfig, SessionInfo, Summary, UpdateInfo, WaStatus } from '@shared/types'
 
-export interface AppState { config: BotConfig; settings: AppSettings; wa: WaStatus; system: SystemInfo; summary: Summary; update: UpdateInfo }
+export interface AppState { config: BotConfig; settings: AppSettings; wa: WaStatus; system: SystemInfo; summary: Summary; update: UpdateInfo; session: SessionInfo }
 
 export function useAppState(): [AppState | null, () => void] {
   const [s, setS] = useState<AppState | null>(null)
-  const load = () => { void window.api.getState().then((r) => setS((p) => ({ ...r, update: p?.update ?? { state: 'idle' } }))) }
+  const load = () => { void Promise.all([window.api.getState(), window.api.sessionGet()]).then(([r, session]) => setS((p) => ({ ...r, session, update: p?.update ?? { state: 'idle' } }))) }
   useEffect(() => {
     load()
     const offs = [
@@ -64,4 +64,20 @@ export function ConnectCard({ wa }: { wa: WaStatus }) {
         {wa.state === 'disconnected' && <button className="btn pri big" onClick={() => api.waConnect()}>Gerar QR Code</button>}
       </div>}
   </div>
+}
+
+/** Caixa de diálogo simples (o prompt() nativo não existe no Electron). */
+export function useAsk(): [ReactNode, (title: string, fields: { key: string; label: string; placeholder?: string }[]) => Promise<Record<string, string> | null>] {
+  const [st, setSt] = useState<{ title: string; fields: { key: string; label: string; placeholder?: string }[]; res: (v: Record<string, string> | null) => void } | null>(null)
+  const [vals, setVals] = useState<Record<string, string>>({})
+  const ask = (title: string, fields: { key: string; label: string; placeholder?: string }[]) => new Promise<Record<string, string> | null>((res) => { setVals({}); setSt({ title, fields, res }) })
+  const close = (v: Record<string, string> | null) => { st?.res(v); setSt(null) }
+  const el = st ? <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.4)', display: 'grid', placeItems: 'center', zIndex: 60 }} onClick={() => close(null)}>
+    <div className="card" style={{ width: 420, margin: 0 }} onClick={(e) => e.stopPropagation()}>
+      <h2>{st.title}</h2>
+      {st.fields.map((f, i) => <Field key={f.key} label={f.label}><input type="text" autoFocus={i === 0} placeholder={f.placeholder} value={vals[f.key] ?? ''}
+        onChange={(e) => setVals({ ...vals, [f.key]: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && close(vals)} /></Field>)}
+      <div className="row" style={{ marginTop: 16 }}><span /><button className="btn fit" onClick={() => close(null)}>Cancelar</button><button className="btn pri fit" onClick={() => close(vals)}>OK</button></div>
+    </div></div> : null
+  return [el, ask]
 }

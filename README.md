@@ -12,6 +12,26 @@ Assistente de WhatsApp para assistência técnica (Electron + React + TypeScript
 |---|---|
 | ![Início](docs/screenshots/inicio.png) | ![Configurar bot](docs/screenshots/configurar-bot.png) |
 
+### Atendimentos
+Lista de conversas com busca e filtros (Todas, Pendentes, Minhas, Com o bot), avatar, hora, indicador de "sem resposta" e quem está atendendo; chat com separador de dia, mensagens agrupadas, foto/áudio/vídeo/documento/localização e botão "Ir para o fim"; painel de **contato** com nome editável, copiar número, abrir no WhatsApp, anotações, dados coletados pelo bot e histórico de solicitações. Imagens com dados fictícios.
+
+| Conversas e chat | Painel de contato (janela larga) |
+|---|---|
+| ![Conversas e chat](docs/screenshots/atendimentos-conversas.png) | ![Painel de contato](docs/screenshots/atendimentos-contato.png) |
+
+| Compose: anexos, localização e contato | Respostas rápidas (botão ⚡ ou digitando `/`) |
+|---|---|
+| ![Menu de anexos](docs/screenshots/atendimentos-compose.png) | ![Respostas rápidas](docs/screenshots/atendimentos-respostas-rapidas.png) |
+
+**Compose:** campo que cresce com o texto, Enter envia e Shift+Enter quebra a linha, rascunho guardado por conversa, anexos com pré-visualização antes de enviar (vários de uma vez, legenda no primeiro), **arrastar e soltar** arquivos, respostas rápidas editáveis (`{nome}` vira o primeiro nome do cliente), aviso claro quando o bot está conduzindo (ao enviar você assume) ou o WhatsApp está desconectado, e a assinatura que será usada.
+
+| Solicitações |
+|---|
+| ![Solicitações](docs/screenshots/atendimentos-solicitacoes.png) |
+
+## Comportamento no WhatsApp
+Toda ação automática do bot (resposta, "digitando…") espera um **atraso aleatório de 2 a 5 segundos** (`src/main/whatsapp/jitter.ts`), para parecer natural e reduzir risco de bloqueio. Mensagens enviadas por uma pessoa pelo app saem imediatamente, sem atraso.
+
 ## Desenvolvimento
 ```bash
 npm install

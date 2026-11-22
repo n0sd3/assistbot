@@ -11,11 +11,13 @@ export interface BotConfig {
   services: ServiceType[]
   pickup: { enabled: boolean; options: PickupOption[] }
   followUps: FollowUp[]
+  quickReplies: string[]
   messages: {
     greeting: string; askName: string; askService: string; askEquipment: string
     askBrand: string; askProblem: string; askPickup: string; askAddress: string
     askAvailability: string; confirm: string; closing: string; outOfHours: string
     handoff: string; resume: string; invalid: string; correctPrompt: string
+    mediaReceived: string; audioReceived: string
   }
   handoff: { keywords: string[]; pauseMinutesAfterHuman: number }
   behavior: {
@@ -43,11 +45,32 @@ export interface EngineResult { session: Session; replies: string[]; event: Engi
 export type ConnState = 'disconnected' | 'connecting' | 'qr' | 'connected'
 export interface WaStatus { state: ConnState; qr?: string; phone?: string; since?: number; lastError?: string }
 
+export type MsgKind = 'text' | 'image' | 'video' | 'audio' | 'voice' | 'document' | 'sticker' | 'location' | 'contact' | 'other'
 export interface ConversationRow {
   jid: string; name: string; phone: string; status: 'bot' | 'human' | 'needs_human' | 'done'
-  lastMessage: string; lastActivity: number; humanUntil: number
+  lastMessage: string; lastActivity: number; humanUntil: number; assignedName: string
+  /** A última mensagem é do cliente e ninguém respondeu ainda. */
+  unanswered: boolean; lastKind: MsgKind
 }
-export interface MessageRow { id: number; jid: string; fromMe: number; text: string; ts: number; source: 'client' | 'bot' | 'human' }
+export interface MessageRow {
+  id: number; jid: string; fromMe: number; text: string; ts: number; source: 'client' | 'bot' | 'human'
+  kind: MsgKind; mime: string; mediaPath: string; mediaName: string; userName: string; lat?: number; lng?: number
+}
+export interface StagedFile { token: string; name: string; size: number; kind: 'image' | 'video' | 'audio' | 'document'; mime: string }
+export interface ContactInfo {
+  jid: string; name: string; phone: string; notes: string; firstSeen: number; messageCount: number
+  status: ConversationRow['status']; assignedName: string
+  collected: Record<string, string>; requests: RequestRow[]
+}
+export type Role = 'admin' | 'atendente'
+export interface UserRow { id: number; name: string; role: Role; hasPin: boolean }
+export interface SessionInfo { user: UserRow | null; users: UserRow[]; lastUserId: number }
+/** Conteúdo que uma pessoa pode enviar pelo app. */
+export type SendRequest =
+  | { type: 'text'; text: string }
+  | { type: 'attachment'; token: string; caption?: string }
+  | { type: 'location'; lat: number; lng: number; name?: string }
+  | { type: 'contact'; name: string; phone: string }
 export interface RequestRow {
   id: number; jid: string; createdAt: number; status: 'novo' | 'em_andamento' | 'concluido' | 'cancelado'
   name: string; service: string; equipment: string; brandModel: string; problem: string
@@ -63,6 +86,7 @@ export interface Summary {
 export interface AppSettings {
   setupDone: boolean; startWithWindows: boolean; keepRunningInTray: boolean
   preventSleep: boolean; autoBackup: boolean; notifyHuman: boolean; backupKeep: number
+  signHuman: boolean; signBot: boolean; botSignatureName: string
 }
 export interface UpdateInfo { state: 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'none' | 'error'; version?: string; message?: string }
 

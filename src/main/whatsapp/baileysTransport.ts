@@ -1,7 +1,9 @@
 import type { WaStatus } from '@shared/types'
-import type { IncomingMessage, WaTransport } from './transport'
+import type { IncomingMessage, OutContent, WaTransport } from './transport'
+import { parseMessage } from './parse'
 import { clearAuth, useSqliteAuthState } from './authStore'
 import { log } from '../logger'
+import { jitter } from './jitter'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -90,30 +92,55 @@ export class BaileysTransport implements WaTransport {
     const jid: string | undefined = m.key?.remoteJid
     if (!jid || jid === 'status@broadcast') return
     if (type === 'append' && !m.key.fromMe) return
-    const msg = m.message
-    if (!msg) return
-    const inner = msg.ephemeralMessage?.message ?? msg.viewOnceMessage?.message ?? msg
-    const text: string = inner.conversation ?? inner.extendedTextMessage?.text ?? inner.buttonsResponseMessage?.selectedDisplayText ??
-      inner.listResponseMessage?.title ?? inner.imageMessage?.caption ?? ''
-    const media = !text && (inner.imageMessage || inner.audioMessage || inner.videoMessage || inner.documentMessage || inner.stickerMessage)
+    if (!m.message) return
+    const p = parseMessage(m.message)
+    if (p.ignore) return
+    const L = this.lib; const sock = this.sock
+    const download = p.hasMedia
+      ? async (): Promise<Buffer> => {
+        const pino = (await import('pino')).default
+        return (await L.downloadMediaMessage(m, 'buffer', {}, { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage })) as Buffer
+      }
+      : undefined
     this.msgCb({
-      id: m.key.id, jid, altJid: m.key.remoteJidAlt ?? m.key.participantAlt, text: text || (media ? '[mídia]' : ''), fromMe: !!m.key.fromMe,
+      id: m.key.id, jid, altJid: m.key.remoteJidAlt ?? m.key.participantAlt, text: p.text, fromMe: !!m.key.fromMe,
       pushName: m.pushName, ts: (Number(m.messageTimestamp) || Math.floor(Date.now() / 1000)) * 1000,
-      isGroup: jid.endsWith('@g.us') || jid.endsWith('@broadcast') || jid.endsWith('@newsletter')
+      isGroup: jid.endsWith('@g.us') || jid.endsWith('@broadcast') || jid.endsWith('@newsletter'),
+      kind: p.kind, mime: p.mime, fileName: p.fileName, lat: p.lat, lng: p.lng, download
     })
   }
 
-  async sendText(jid: string, text: string): Promise<string | undefined> {
+  private toBaileys(c: OutContent): any {
+    switch (c.type) {
+      case 'text': return { text: c.text }
+      case 'location': return { location: { degreesLatitude: c.lat, degreesLongitude: c.lng, name: c.name } }
+      case 'contact': return { contacts: { displayName: c.name, contacts: [{ vcard: c.vcard }] } }
+      case 'media':
+        if (c.kind === 'image') return { image: c.data, mimetype: c.mime, caption: c.caption || undefined }
+        if (c.kind === 'video') return { video: c.data, mimetype: c.mime, caption: c.caption || undefined }
+        if (c.kind === 'audio') return { audio: c.data, mimetype: c.mime, ptt: !!c.ptt }
+        if (c.kind === 'sticker') return { sticker: c.data }
+        return { document: c.data, mimetype: c.mime, fileName: c.fileName ?? 'arquivo', caption: c.caption || undefined }
+    }
+  }
+
+  async send(jid: string, content: OutContent, automated = true): Promise<string | undefined> {
     if (!this.sock || this.status.state !== 'connected') throw new Error('WhatsApp desconectado')
-    try {
-      await this.sock.presenceSubscribe(jid)
-      await this.sock.sendPresenceUpdate('composing', jid)
-      await sleep(Math.min(2500, 600 + text.length * 15))
-      await this.sock.sendPresenceUpdate('paused', jid)
-    } catch { /* presença é opcional */ }
-    const r = await this.sock.sendMessage(jid, { text })
+    if (automated) {
+      await jitter(2000, 5000) // atraso aleatório de 2 a 5 s antes de qualquer ação automática
+      try {
+        await this.sock.presenceSubscribe(jid)
+        await this.sock.sendPresenceUpdate(content.type === 'media' && content.kind === 'audio' ? 'recording' : 'composing', jid)
+        await sleep(content.type === 'text' ? Math.min(1500, 400 + content.text.length * 10) : 800)
+        await this.sock.sendPresenceUpdate('paused', jid)
+      } catch { /* presença é opcional */ }
+    }
+    if (!this.sock || this.status.state !== 'connected') throw new Error('WhatsApp desconectado')
+    const r = await this.sock.sendMessage(jid, this.toBaileys(content))
     return r?.key?.id
   }
+
+  sendText(jid: string, text: string, automated = true): Promise<string | undefined> { return this.send(jid, { type: 'text', text }, automated) }
 
   async stop(): Promise<void> {
     this.stopped = true

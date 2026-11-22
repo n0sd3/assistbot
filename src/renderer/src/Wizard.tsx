@@ -7,10 +7,16 @@ export function Wizard({ st, reload }: { st: AppState; reload: () => void }) {
   const [step, setStep] = useState(1)
   const [cfg, setCfg] = useState<BotConfig>(st.config)
   const [busy, setBusy] = useState(false)
+  const [me, setMe] = useState(''); const [pin, setPin] = useState(''); const [err, setErr] = useState('')
   const b = cfg.business
   const setB = (p: Partial<typeof b>) => setCfg({ ...cfg, business: { ...b, ...p } })
   const persist = async () => { await api.saveConfig(cfg) }
   const next = async () => {
+    if (step === 1 && st.session.users.length === 0) {
+      if (!me.trim()) { setErr('Informe seu nome: ele assina as mensagens que você enviar.'); return }
+      try { await api.userSave({ name: me, role: 'admin', pin: pin || null }) } catch (e) { setErr((e as Error).message); return }
+    }
+    setErr('')
     await persist()
     if (step === 1 && st.wa.state === 'disconnected') void api.waConnect()
     setStep(step + 1)
@@ -27,7 +33,11 @@ export function Wizard({ st, reload }: { st: AppState; reload: () => void }) {
       <Field label="Nome da assistência"><input type="text" value={b.name} onChange={(e) => setB({ name: e.target.value })} /></Field>
       <Field label="Endereço"><input type="text" value={b.address} placeholder="Rua, número, bairro, cidade" onChange={(e) => setB({ address: e.target.value })} /></Field>
       <Field label="Horário de funcionamento" hint="Texto que o cliente vai ler. Você ajusta os dias e horas exatos depois em Configurar bot."><input type="text" value={b.hoursText} onChange={(e) => setB({ hoursText: e.target.value })} /></Field>
-      <Field label="Telefone de contato"><input type="text" value={b.phone} placeholder="(00) 00000-0000" onChange={(e) => setB({ phone: e.target.value })} /></Field></div>}
+      <Field label="Telefone de contato"><input type="text" value={b.phone} placeholder="(00) 00000-0000" onChange={(e) => setB({ phone: e.target.value })} /></Field>
+      {st.session.users.length === 0 && <><h2 style={{ marginTop: 20 }}>Seu acesso</h2>
+        <Field label="Seu nome (administrador)" hint="Aparece como assinatura nas mensagens que você enviar. Depois você pode cadastrar outros atendentes."><input type="text" value={me} placeholder="Ex.: Edson Cleubert" onChange={(e) => setMe(e.target.value)} /></Field>
+        <Field label="PIN (opcional)" hint="Números para proteger o acesso ao programa."><input type="password" inputMode="numeric" maxLength={12} value={pin} onChange={(e) => setPin(e.target.value)} /></Field></>}
+      {err && <div className="banner r" style={{ marginTop: 10 }}>{err}</div>}</div>}
     {step === 2 && <div className="card"><h1>2. Conectar o WhatsApp</h1><p className="sub">Use o número da assistência. Recomendamos um chip dedicado ao negócio.</p><ConnectCard wa={st.wa} />
       {st.wa.state === 'connected' && <p className="mute">Perfeito! Pode seguir para o próximo passo.</p>}</div>}
     {step === 3 && <div className="card"><h1>3. Configurar atendimento</h1><p className="sub">Já deixamos tudo preparado. Marque só o que a sua assistência faz.</p>

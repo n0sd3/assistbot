@@ -36,6 +36,13 @@ export const DEFAULT_CONFIG: BotConfig = {
     { id: 'carregador', text: 'Você tem o carregador original?', equipments: ['Celular', 'Notebook', 'Tablet', 'Videogame'], services: [] },
     { id: 'senha', text: 'Existe senha de bloqueio? (não precisa informar a senha agora)', equipments: ['Celular', 'Notebook', 'Computador', 'Tablet'], services: [] }
   ],
+  quickReplies: [
+    'Olá {nome}, tudo bem? Como posso ajudar?',
+    'Já estamos verificando seu aparelho e retornamos em breve.',
+    'Pode me enviar uma foto do defeito, por favor?',
+    'Seu aparelho está pronto! Pode retirar no nosso horário de funcionamento.',
+    'Aguarde um instante, por favor.'
+  ],
   messages: {
     greeting: 'Olá! 👋 Bem-vindo(a) à *{empresa}*. Sou o assistente virtual e vou anotar os dados do seu atendimento.',
     askName: 'Para começar, qual é o seu nome?',
@@ -52,7 +59,9 @@ export const DEFAULT_CONFIG: BotConfig = {
     handoff: 'Certo! Vou chamar um atendente para falar com você. Aguarde um instante, por favor. 🙏',
     resume: 'Que bom ter você de volta! Vamos continuar de onde paramos.',
     invalid: 'Não consegui entender. Pode responder de outra forma?',
-    correctPrompt: 'O que deseja corrigir? Responda com o número:\n{opcoes}'
+    correctPrompt: 'O que deseja corrigir? Responda com o número:\n{opcoes}',
+    mediaReceived: 'Recebi seu(sua) {tipo}! 👍 Já anexei ao seu atendimento. Para continuar, responda por texto, por favor.',
+    audioReceived: 'Ainda não consigo ouvir áudios 😅 Pode escrever sua resposta, por favor?'
   },
   handoff: { keywords: ['atendente', 'humano', 'pessoa', 'falar com alguem', 'responsavel', 'dono'], pauseMinutesAfterHuman: 120 },
   behavior: { enabled: false, outOfHoursMode: 'collect', resumeAfterMinutes: 30, sessionExpireHours: 24 }
@@ -60,5 +69,6 @@ export const DEFAULT_CONFIG: BotConfig = {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   setupDone: false, startWithWindows: true, keepRunningInTray: true,
-  preventSleep: true, autoBackup: true, notifyHuman: true, backupKeep: 7
+  preventSleep: true, autoBackup: true, notifyHuman: true, backupKeep: 7,
+  signHuman: true, signBot: false, botSignatureName: 'Assistente virtual'
 }

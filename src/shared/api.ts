@@ -1,4 +1,4 @@
-import type { AiState, AppSettings, BotConfig, ConversationRow, MessageRow, PickupRow, RequestRow, Summary, UpdateInfo, WaStatus } from './types'
+import type { AiState, ContactInfo, StagedFile, AppSettings, BotConfig, ConversationRow, MessageRow, PickupRow, RequestRow, Role, SendRequest, SessionInfo, Summary, UpdateInfo, WaStatus } from './types'
 
 export interface SystemInfo {
   version: string; online: boolean; dataFolder: string; encryption: boolean; botActive: boolean
@@ -16,7 +16,21 @@ export interface Api {
   messages(jid: string): Promise<MessageRow[]>
   takeOver(jid: string): Promise<void>
   release(jid: string): Promise<void>
-  sendManual(jid: string, text: string): Promise<void>
+  /** Envia texto, foto, vídeo, áudio, documento, localização ou contato. Retorna false se o usuário cancelou a escolha do arquivo. */
+  send(jid: string, req: SendRequest): Promise<boolean>
+  /** Abre o seletor de arquivos e devolve um token (o arquivo só é lido pelo processo principal ao enviar). */
+  pickFile(kind: 'image' | 'video' | 'audio' | 'document'): Promise<StagedFile | null>
+  /** Registra um arquivo arrastado para o chat. */
+  stageFile(path: string): Promise<StagedFile | null>
+  contactGet(jid: string): Promise<ContactInfo>
+  contactSave(jid: string, p: { name?: string; notes?: string }): Promise<void>
+  openMedia(rel: string): Promise<void>
+  saveMediaAs(rel: string, name: string): Promise<boolean>
+  sessionGet(): Promise<SessionInfo>
+  login(userId: number, pin?: string): Promise<{ ok: boolean; error?: string }>
+  logout(): Promise<void>
+  userSave(u: { id?: number; name: string; role: Role; pin?: string | null }): Promise<void>
+  userDelete(id: number): Promise<void>
   requests(): Promise<RequestRow[]>
   updateRequest(id: number, p: { status?: string; notes?: string }): Promise<void>
   pickups(): Promise<PickupRow[]>
@@ -25,7 +39,7 @@ export interface Api {
   exportBackup(): Promise<string | undefined>
   importBackup(): Promise<string | undefined>
   listBackups(): Promise<{ name: string; size: number; time: number }[]>
-  openFolder(which: 'data' | 'backups' | 'logs'): Promise<void>
+  openFolder(which: 'data' | 'backups' | 'logs' | 'media'): Promise<void>
   checkUpdate(): Promise<UpdateInfo>
   installUpdate(): Promise<void>
   getUpdateUrl(): Promise<string>

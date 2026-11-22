@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import type { BotConfig } from '@shared/types'
 import { DEFAULT_CONFIG } from '@shared/defaults'
-import { api, Field, Setting, StrList, Toggle, useToast, type AppState } from '../ui'
+import { api, Field, Setting, StrList, Toggle, useAsk, useToast, type AppState } from '../ui'
 
 const DAYS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado']
 type P = { cfg: BotConfig; set: (c: BotConfig) => void }
 const kw = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean)
 
 export function EquipEditor({ cfg, set }: P) {
+  const [dlg, ask] = useAsk()
   const toggle = (name: string) => {
     const has = cfg.equipmentTypes.some((e) => e.name === name)
     const base = DEFAULT_CONFIG.equipmentTypes.find((e) => e.name === name) ?? { name, keywords: [], askBrand: true }
@@ -20,9 +21,10 @@ export function EquipEditor({ cfg, set }: P) {
         <b style={{ width: 150 }}>{e.name}</b>
         <input type="text" value={e.keywords.join(', ')} placeholder="palavras separadas por vírgula" onChange={(ev) => set({ ...cfg, equipmentTypes: cfg.equipmentTypes.map((x, j) => (j === i ? { ...x, keywords: kw(ev.target.value) } : x)) })} />
         <label style={{ margin: 0, fontWeight: 400 }}><input type="checkbox" checked={e.askBrand} onChange={(ev) => set({ ...cfg, equipmentTypes: cfg.equipmentTypes.map((x, j) => (j === i ? { ...x, askBrand: ev.target.checked } : x)) })} /> perguntar marca/modelo</label></div>)}
-      <button className="btn" onClick={() => { const n = prompt('Nome do novo tipo de equipamento:'); if (n?.trim()) set({ ...cfg, equipmentTypes: [...cfg.equipmentTypes, { name: n.trim(), keywords: [], askBrand: true }] }) }}>+ Novo tipo</button></details></div>
+      <button className="btn" onClick={async () => { const r = await ask('Novo tipo de equipamento', [{ key: 'n', label: 'Nome do equipamento' }]); const n = r?.n?.trim(); if (n) set({ ...cfg, equipmentTypes: [...cfg.equipmentTypes, { name: n, keywords: [], askBrand: true }] }) }}>+ Novo tipo</button></details>{dlg}</div>
 }
 export function ServicesEditor({ cfg, set }: P) {
+  const [dlg, ask] = useAsk()
   const names = [...new Set([...DEFAULT_CONFIG.services.map((e) => e.name), ...cfg.services.map((e) => e.name)])]
   const toggle = (name: string) => {
     const has = cfg.services.some((e) => e.name === name)
@@ -30,7 +32,7 @@ export function ServicesEditor({ cfg, set }: P) {
     set({ ...cfg, services: has ? cfg.services.filter((e) => e.name !== name) : [...cfg.services, base] })
   }
   return <div><div className="chips">{names.map((n) => <button key={n} className={'chip' + (cfg.services.some((e) => e.name === n) ? ' on' : '')} onClick={() => toggle(n)}>{n}</button>)}</div>
-    <button className="btn" style={{ marginTop: 10 }} onClick={() => { const n = prompt('Nome do novo serviço:'); if (n?.trim()) set({ ...cfg, services: [...cfg.services, { name: n.trim(), keywords: [], askPickup: true }] }) }}>+ Novo serviço</button></div>
+    <button className="btn" style={{ marginTop: 10 }} onClick={async () => { const r = await ask('Novo serviço', [{ key: 'n', label: 'Nome do serviço' }]); const n = r?.n?.trim(); if (n) set({ ...cfg, services: [...cfg.services, { name: n, keywords: [], askPickup: true }] }) }}>+ Novo serviço</button>{dlg}</div>
 }
 export function PickupEditor({ cfg, set }: P) {
   return <div><Setting title="Oferecer coleta (buscar o aparelho)" desc="O bot pergunta se o cliente vai levar ou se quer que busquem."><Toggle on={cfg.pickup.enabled} onChange={(v) => set({ ...cfg, pickup: { ...cfg.pickup, enabled: v } })} /></Setting>
@@ -49,7 +51,8 @@ const MSG: [keyof BotConfig['messages'], string, string][] = [
   ['askAddress', 'Pergunta do endereço', ''], ['askAvailability', 'Pergunta de disponibilidade', ''],
   ['confirm', 'Confirmação', 'Use {resumo} para o resumo dos dados.'],
   ['closing', 'Mensagem final', 'Use {nome} e {horario}.'], ['outOfHours', 'Resposta fora do expediente', 'Use {horario}.'],
-  ['handoff', 'Ao chamar um atendente', ''], ['resume', 'Ao retomar conversa parada', ''], ['invalid', 'Quando não entender', '']
+  ['handoff', 'Ao chamar um atendente', ''], ['resume', 'Ao retomar conversa parada', ''], ['invalid', 'Quando não entender', ''],
+  ['mediaReceived', 'Quando o cliente envia foto/arquivo', 'Use {tipo} (foto, vídeo, documento…).'], ['audioReceived', 'Quando o cliente envia áudio', 'O bot ainda não entende áudios.']
 ]
 
 export function ConfigurarBot({ st, reload }: { st: AppState; reload: () => void }) {
@@ -59,7 +62,7 @@ export function ConfigurarBot({ st, reload }: { st: AppState; reload: () => void
   const [toast, say] = useToast()
   const set = (c: BotConfig) => { setCfg(c); setDirty(true) }
   const save = async () => { await api.saveConfig(cfg); setDirty(false); say('Alterações salvas!'); reload() }
-  const T = ([['msgs', 'Mensagens'], ['q', 'Perguntas'], ['eq', 'Equipamentos e serviços'], ['hrs', 'Horários'], ['pick', 'Coleta'], ['beh', 'Comportamento']] as const)
+  const T = ([['msgs', 'Mensagens'], ['q', 'Perguntas'], ['eq', 'Equipamentos e serviços'], ['hrs', 'Horários'], ['pick', 'Coleta'], ['quick', 'Respostas rápidas'], ['beh', 'Comportamento']] as const)
   return <div>
     <h1>Configurar bot</h1><p className="sub">Tudo o que o bot fala e pergunta. Nada de programação: é só editar os textos.</p>
     <div className="tabs">{T.map(([k, l]) => <button key={k} className={'tab' + (tab === k ? ' on' : '')} onClick={() => setTab(k)}>{l}</button>)}</div>
@@ -87,6 +90,8 @@ export function ConfigurarBot({ st, reload }: { st: AppState; reload: () => void
           <option value="collect">Avisar que está fechado e mesmo assim anotar o pedido</option><option value="message_only">Só avisar que está fechado</option></select></Field></>}
       {tab === 'pick' && <><PickupEditor cfg={cfg} set={set} />
         <Field label="Endereço da loja" hint="Usado em {endereco} nas mensagens."><input type="text" value={cfg.business.address} onChange={(e) => set({ ...cfg, business: { ...cfg.business, address: e.target.value } })} /></Field></>}
+      {tab === 'quick' && <><p className="mute">Textos prontos para você usar no chat com um clique (botão ⚡ ou digitando <b>/</b>). Use <b>{'{nome}'}</b> para o primeiro nome do cliente.</p>
+        <StrList items={cfg.quickReplies} onChange={(v) => set({ ...cfg, quickReplies: v })} placeholder="Ex.: Olá {nome}, tudo bem?" /></>}
       {tab === 'beh' && <>
         <Field label="Palavras que chamam um atendente humano" hint="Se o cliente escrever alguma delas, o bot para e avisa você."><StrList items={cfg.handoff.keywords} onChange={(v) => set({ ...cfg, handoff: { ...cfg.handoff, keywords: v } })} /></Field>
         <Field label="Depois que um funcionário responder, o bot fica em silêncio por (minutos)"><input type="text" value={cfg.handoff.pauseMinutesAfterHuman} onChange={(e) => set({ ...cfg, handoff: { ...cfg.handoff, pauseMinutesAfterHuman: Number(e.target.value.replace(/\D/g, '')) || 0 } })} /></Field>

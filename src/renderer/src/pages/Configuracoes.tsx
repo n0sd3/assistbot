@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AppSettings } from '@shared/types'
 import { AiCard } from './AiCard'
+import { UsersCard } from './UsersCard'
 import { api, ConnectCard, Setting, Toggle, fmtDate, useToast, type AppState } from '../ui'
 
 export function Configuracoes({ st, reload }: { st: AppState; reload: () => void }) {
@@ -18,6 +19,15 @@ export function Configuracoes({ st, reload }: { st: AppState; reload: () => void
         {st.wa.state === 'connected' && <button className="btn red fit" onClick={async () => { if (confirm('Desconectar este WhatsApp? Será preciso ler o QR Code de novo.')) await api.waLogout() }}>Desconectar / trocar número</button>}
         <span /></div>
       <p className="hint">Se a conexão cair, o AssistBot tenta reconectar sozinho. Se o celular desvincular o aparelho, será necessário ler um novo QR Code.</p></div>
+
+    <UsersCard st={st} reload={reload} />
+
+    <div className="card"><h2>Assinatura das mensagens</h2>
+      <p className="mute">Exemplo de como o cliente recebe uma mensagem sua:</p>
+      <pre style={{ background: '#d9fdd3', padding: 10, borderRadius: 10, display: 'inline-block' }}>{'*' + (st.session.user?.name ?? 'Seu Nome') + ':*\nOlá, tudo bem?'}</pre>
+      <Setting title="Assinar as mensagens enviadas por pessoas" desc="Texto e legendas saem com *Nome:* na primeira linha, usando o nome de quem está logado."><Toggle on={st.settings.signHuman} onChange={(v) => set({ signHuman: v })} /></Setting>
+      <Setting title="Assinar as mensagens do bot" desc="Mostra ao cliente que quem respondeu foi o assistente virtual."><Toggle on={st.settings.signBot} onChange={(v) => set({ signBot: v })} /></Setting>
+      {st.settings.signBot && <div className="row"><input type="text" defaultValue={st.settings.botSignatureName} onBlur={(e) => set({ botSignatureName: e.target.value.trim() || 'Assistente virtual' })} /><span /></div>}</div>
 
     <div className="card"><h2>Funcionamento</h2>
       <Setting title="Abrir junto com o Windows" desc="O bot volta a funcionar sozinho quando o computador ligar."><Toggle on={st.settings.startWithWindows} onChange={(v) => set({ startWithWindows: v })} /></Setting>
@@ -50,7 +60,7 @@ export function Configuracoes({ st, reload }: { st: AppState; reload: () => void
 
     <div className="card"><h2>Manutenção</h2>
       <p className="mute">Os dados ficam só neste computador, em: {st.system.dataFolder}. Proteção da sessão do WhatsApp: {st.system.encryption ? 'cifrada pelo Windows' : 'sem cifra do sistema (indisponível)'}.</p>
-      <div className="row"><button className="btn fit" onClick={() => api.openFolder('data')}>Abrir pasta de dados</button><button className="btn fit" onClick={() => api.openFolder('logs')}>Abrir registros (suporte)</button>
+      <div className="row"><button className="btn fit" onClick={() => api.openFolder('data')}>Abrir pasta de dados</button><button className="btn fit" onClick={() => api.openFolder('media')}>Abrir fotos e arquivos recebidos</button><button className="btn fit" onClick={() => api.openFolder('logs')}>Abrir registros (suporte)</button>
         <button className="btn red fit" onClick={() => api.resetAll()}>Apagar todos os dados…</button><span /></div></div>
 
     <div className="card"><h2>Aviso importante</h2>
