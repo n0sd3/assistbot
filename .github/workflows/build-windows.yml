@@ -1,0 +1,28 @@
+name: Build e teste Windows
+on: { workflow_dispatch: {}, push: { tags: ['v*'] } }
+jobs:
+  win:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: npm ci
+      - run: npm test
+      - run: npx electron-vite build
+      - run: npx electron-builder --win nsis --x64 --publish never
+        env: { CSC_IDENTITY_AUTO_DISCOVERY: 'false' }
+      - name: Instalação silenciosa (smoke test em Windows limpo)
+        shell: pwsh
+        run: |
+          $i = Get-ChildItem release\*.exe | Select-Object -First 1
+          Start-Process $i.FullName -ArgumentList '/S' -Wait
+          $exe = "$env:LOCALAPPDATA\Programs\AssistBot\AssistBot.exe"
+          if (-not (Test-Path $exe)) { throw 'Instalação falhou' }
+          $p = Start-Process $exe -ArgumentList '--hidden' -PassThru
+          Start-Sleep 15
+          if ($p.HasExited) { throw 'O app encerrou sozinho' }
+          Get-Content "$env:APPDATA\AssistBot\logs\assistbot.log" -ErrorAction SilentlyContinue
+          Stop-Process -Id $p.Id
+      - uses: actions/upload-artifact@v4
+        with: { name: instalador, path: 'release/*.exe\nrelease/latest.yml\nrelease/*.blockmap' }

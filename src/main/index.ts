@@ -1,0 +1,225 @@
+import { app, BrowserWindow, Menu, Notification, Tray, dialog, ipcMain, nativeImage, net, powerMonitor, powerSaveBlocker, shell } from 'electron'
+import { join } from 'node:path'
+import QRCode from 'qrcode'
+import * as db from './db'
+import { BotManager } from './bot/manager'
+import { BaileysTransport } from './whatsapp/baileysTransport'
+import { autoBackup, backupTo, backupDir, dataFolder, listBackups, restoreFrom } from './services'
+import { log } from './logger'
+import type { Api, SystemInfo } from '@shared/api'
+import type { UpdateInfo, WaStatus } from '@shared/types'
+import { safeStorage } from 'electron'
+
+const HIDDEN = process.argv.includes('--hidden')
+let win: BrowserWindow | null = null
+let tray: Tray | null = null
+let quitting = false
+let wa: WaStatus = { state: 'disconnected' }
+let online = true
+let blocker: number | undefined
+let upd: UpdateInfo = { state: 'idle' }
+let gaps: { from: number; to: number }[] = []
+const transport = new BaileysTransport()
+let manager: BotManager
+
+if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0) }
+app.on('second-instance', () => showWindow())
+
+const asset = (n: string) => join(__dirname, '../../resources', n)
+const send = (ev: string, v: unknown) => { if (win && !win.isDestroyed()) win.webContents.send('ev:' + ev, v) }
+const botActive = () => db.getConfig().behavior.enabled && wa.state === 'connected'
+
+function system(): SystemInfo {
+  return { version: app.getVersion(), online, dataFolder: dataFolder(), encryption: safeStorage.isEncryptionAvailable(), botActive: botActive(), offlineGaps: gaps, platform: process.platform }
+}
+function refresh() {
+  send('system', system())
+  updateTray()
+  applySleepPolicy()
+}
+
+function showWindow() {
+  if (!win || win.isDestroyed()) createWindow()
+  win!.show(); win!.focus()
+}
+
+function createWindow() {
+  win = new BrowserWindow({
+    width: 1100, height: 740, minWidth: 900, minHeight: 600, show: false, title: 'AssistBot', backgroundColor: '#f6f7f9', autoHideMenuBar: true,
+    icon: asset('icon.png'),
+    webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
+  })
+  Menu.setApplicationMenu(null)
+  win.once('ready-to-show', () => { if (!HIDDEN || !db.getSettings().setupDone) win?.show() })
+  win.on('close', (e) => {
+    if (quitting) return
+    if (db.getSettings().keepRunningInTray) {
+      e.preventDefault(); win?.hide()
+      if (!db.kvGet('trayHintShown', false)) {
+        db.kvSet('trayHintShown', true)
+        new Notification({ title: 'AssistBot continua ativo', body: 'O atendimento automático segue funcionando em segundo plano. Para abrir, clique no ícone perto do relógio. Para sair de vez, use o botão direito > Sair.' }).show()
+      }
+    }
+  })
+  win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) void shell.openExternal(url); return { action: 'deny' } })
+  win.webContents.on('will-navigate', (e) => e.preventDefault())
+  if (process.env['ELECTRON_RENDERER_URL']) void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
+  else void win.loadFile(join(__dirname, '../renderer/index.html'))
+}
+
+function updateTray() {
+  if (!tray) return
+  const active = botActive()
+  tray.setImage(nativeImage.createFromPath(asset(active ? 'tray-on.png' : 'tray-off.png')))
+  const status = wa.state === 'connected' ? (active ? 'Atendimento automático ATIVO' : 'WhatsApp conectado — bot desligado') : 'WhatsApp desconectado'
+  tray.setToolTip('AssistBot — ' + status)
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: status, enabled: false }, { type: 'separator' },
+    { label: 'Abrir AssistBot', click: () => showWindow() },
+    { label: db.getConfig().behavior.enabled ? 'Pausar atendimento automático' : 'Ativar atendimento automático', click: () => { setBot(!db.getConfig().behavior.enabled) } },
+    { type: 'separator' }, { label: 'Sair do AssistBot', click: () => { quitting = true; app.quit() } }
+  ]))
+}
+
+function setBot(on: boolean) {
+  const c = db.getConfig(); c.behavior.enabled = on; db.saveConfig(c)
+  send('changed', null); refresh()
+}
+
+function applySleepPolicy() {
+  const want = db.getSettings().preventSleep && db.getConfig().behavior.enabled
+  if (want && blocker === undefined) blocker = powerSaveBlocker.start('prevent-app-suspension')
+  if (!want && blocker !== undefined) { powerSaveBlocker.stop(blocker); blocker = undefined }
+}
+
+function applyAutoStart() {
+  const s = db.getSettings()
+  if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: s.startWithWindows, args: ['--hidden'] })
+}
+
+function notify(title: string, body: string, kind: 'human' | 'request') {
+  if (kind === 'human' && !db.getSettings().notifyHuman) return
+  const n = new Notification({ title, body, icon: asset('icon.png') })
+  n.on('click', () => showWindow())
+  n.show()
+}
+
+function setupUpdater() {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+  const set = (u: UpdateInfo) => { upd = u; send('update', u) }
+  autoUpdater.on('checking-for-update', () => set({ state: 'checking' }))
+  autoUpdater.on('update-available', (i) => set({ state: 'downloading', version: i.version }))
+  autoUpdater.on('update-not-available', () => set({ state: 'none' }))
+  autoUpdater.on('update-downloaded', (i) => set({ state: 'ready', version: i.version }))
+  autoUpdater.on('error', (e) => set({ state: 'error', message: String(e?.message ?? e).slice(0, 200) }))
+  const check = async (): Promise<UpdateInfo> => {
+    const url = db.kvGet('updateUrl', '')
+    if (!app.isPackaged) return { state: 'error', message: 'Atualizações só funcionam no programa instalado.' }
+    if (!url) return { state: 'error', message: 'Endereço de atualização não configurado.' }
+    autoUpdater.setFeedURL({ provider: 'generic', url })
+    try { await autoUpdater.checkForUpdates() } catch (e) { set({ state: 'error', message: String((e as Error).message).slice(0, 200) }) }
+    return upd
+  }
+  return { check, install: () => { quitting = true; autoUpdater.quitAndInstall(true, true) } }
+}
+
+function registerIpc(updater: ReturnType<typeof setupUpdater>) {
+  const h: { [K in keyof Api]: (...a: Parameters<Api[K]>) => ReturnType<Api[K]> | Awaited<ReturnType<Api[K]>> } = {
+    getState: () => ({ config: db.getConfig(), settings: db.getSettings(), wa, system: system(), summary: db.getSummary() }),
+    saveConfig: (c) => { db.saveConfig(c); refresh() },
+    saveSettings: (s) => { db.saveSettings(s); applyAutoStart(); refresh() },
+    setBotEnabled: (on) => setBot(on),
+    waConnect: () => transport.start(),
+    waDisconnect: () => transport.stop(),
+    waLogout: () => transport.logout(),
+    conversations: () => db.listConversations(),
+    messages: (jid) => db.listMessages(jid),
+    takeOver: (jid) => manager.takeOver(jid),
+    release: (jid) => manager.release(jid),
+    sendManual: (jid, t) => manager.sendManual(jid, t),
+    requests: () => db.listRequests(),
+    updateRequest: (id, p) => { db.updateRequest(id, p); send('changed', null) },
+    pickups: () => db.listPickups(),
+    updatePickup: (id, p) => { db.updatePickup(id, p); send('changed', null) },
+    backupNow: () => autoBackup(db.getSettings().backupKeep),
+    exportBackup: async () => {
+      const r = await dialog.showSaveDialog(win!, { title: 'Salvar cópia de segurança', defaultPath: `AssistBot-backup-${new Date().toISOString().slice(0, 10)}.db`, filters: [{ name: 'Backup AssistBot', extensions: ['db'] }] })
+      if (r.canceled || !r.filePath) return undefined
+      backupTo(r.filePath); return r.filePath
+    },
+    importBackup: async () => {
+      const r = await dialog.showOpenDialog(win!, { title: 'Escolher backup para restaurar', properties: ['openFile'], filters: [{ name: 'Backup AssistBot', extensions: ['db'] }] })
+      if (r.canceled || !r.filePaths[0]) return undefined
+      const c = await dialog.showMessageBox(win!, { type: 'warning', buttons: ['Restaurar', 'Cancelar'], defaultId: 1, cancelId: 1, message: 'Restaurar este backup?', detail: 'Os dados atuais (atendimentos, coletas e configurações) serão substituídos. Uma cópia dos dados atuais será guardada antes.' })
+      if (c.response !== 0) return undefined
+      restoreFrom(r.filePaths[0]); send('changed', null); refresh(); return r.filePaths[0]
+    },
+    listBackups: () => listBackups(),
+    openFolder: async (w) => { await shell.openPath(w === 'backups' ? backupDir() : w === 'logs' ? join(app.getPath('userData'), 'logs') : dataFolder()) },
+    checkUpdate: () => updater.check(),
+    installUpdate: () => updater.install(),
+    getUpdateUrl: () => db.kvGet('updateUrl', ''),
+    setUpdateUrl: (u) => db.kvSet('updateUrl', u.trim()),
+    openPowerSettings: async () => { await shell.openExternal('ms-settings:powersleep') },
+    finishSetup: () => { const s = db.getSettings(); s.setupDone = true; db.saveSettings(s); applyAutoStart(); refresh() },
+    resetAll: async () => {
+      const c = await dialog.showMessageBox(win!, { type: 'warning', buttons: ['Apagar tudo', 'Cancelar'], defaultId: 1, cancelId: 1, message: 'Apagar todos os dados?', detail: 'Isso remove atendimentos, coletas, configurações e desconecta o WhatsApp. Não pode ser desfeito.' })
+      if (c.response !== 0) return
+      await transport.logout()
+      for (const t of ['kv', 'wa_auth', 'customers', 'conversations', 'messages', 'requests', 'pickups']) db.getDb().exec(`DELETE FROM ${t}`)
+      send('changed', null); refresh()
+    }
+  }
+  for (const k of Object.keys(h) as (keyof Api)[]) {
+    ipcMain.handle('api:' + k, async (_e, ...args) => (h[k] as (...a: unknown[]) => unknown)(...args))
+  }
+}
+
+app.whenReady().then(async () => {
+  app.setAppUserModelId('com.assistbot.app')
+  db.openDb()
+  // lacunas: períodos em que o computador/app ficou desligado ou suspenso
+  const last = db.kvGet<number>('heartbeat', 0)
+  gaps = db.kvGet('gaps', [] as { from: number; to: number }[])
+  if (last && Date.now() - last > 5 * 60_000) { gaps = [{ from: last, to: Date.now() }, ...gaps].slice(0, 5); db.kvSet('gaps', gaps) }
+  setInterval(() => db.kvSet('heartbeat', Date.now()), 60_000)
+
+  manager = new BotManager(transport, { notify, changed: () => { send('changed', null); refresh() } })
+  transport.onStatus(async (s) => {
+    wa = { ...s, qr: s.qr ? await QRCode.toDataURL(s.qr, { margin: 1, width: 320 }) : undefined }
+    send('wa', wa); refresh()
+    if (s.state === 'disconnected' && s.lastError && db.getConfig().behavior.enabled)
+      notify('WhatsApp desconectado', s.lastError, 'human')
+  })
+  const updater = setupUpdater()
+  registerIpc(updater)
+  createWindow()
+  tray = new Tray(nativeImage.createFromPath(asset('tray-off.png')))
+  tray.on('click', () => showWindow())
+  updateTray()
+  applyAutoStart()
+  applySleepPolicy()
+
+  // reconecta sozinho se já houve sessão salva
+  if (db.getDb().prepare('SELECT 1 FROM wa_auth LIMIT 1').get()) void transport.start()
+
+  powerMonitor.on('resume', () => { log.info('Computador acordou'); if (wa.state !== 'connected' && wa.state !== 'qr') void transport.start() })
+  powerMonitor.on('suspend', () => log.info('Computador vai suspender'))
+  setInterval(() => {
+    const o = net.isOnline()
+    if (o !== online) { online = o; refresh(); if (o && wa.state === 'disconnected' && db.getDb().prepare('SELECT 1 FROM wa_auth LIMIT 1').get()) void transport.start() }
+  }, 15_000)
+  // backup diário automático
+  const day = new Date().toISOString().slice(0, 10)
+  if (db.getSettings().autoBackup && db.kvGet('lastAutoBackup', '') !== day) { autoBackup(db.getSettings().backupKeep); db.kvSet('lastAutoBackup', day) }
+  setInterval(() => { const d = new Date().toISOString().slice(0, 10); if (db.getSettings().autoBackup && db.kvGet('lastAutoBackup', '') !== d) { autoBackup(db.getSettings().backupKeep); db.kvSet('lastAutoBackup', d) } }, 3600_000)
+  if (app.isPackaged) setTimeout(() => void updater.check(), 30_000)
+})
+
+app.on('window-all-closed', () => { /* continua na bandeja */ })
+app.on('before-quit', () => { quitting = true; db.kvSet('heartbeat', Date.now()) })
+process.on('uncaughtException', (e) => log.error('uncaughtException', e))
+process.on('unhandledRejection', (e) => log.error('unhandledRejection', e))
