@@ -25,4 +25,9 @@ jobs:
           Get-Content "$env:APPDATA\AssistBot\logs\assistbot.log" -ErrorAction SilentlyContinue
           Stop-Process -Id $p.Id
       - uses: actions/upload-artifact@v4
-        with: { name: instalador, path: 'release/*.exe\nrelease/latest.yml\nrelease/*.blockmap' }
+        with:
+          name: instalador
+          path: |
+            release/*.exe
+            release/latest.yml
+            release/*.blockmap
